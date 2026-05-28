@@ -496,13 +496,15 @@ frappe.ui.filter_utils = {
 			}
 		} else if (["in", "not in"].includes(condition)) {
 			if (val) {
-				try {
-					const parsed = JSON.parse(val);
-					val = Array.isArray(parsed) ? parsed : [String(parsed)];
-				} catch {
-					val = val.split(",").map((v) => strip(v));
+				if (!Array.isArray(val)) {
+					try {
+						const parsed = JSON.parse(val);
+						val = Array.isArray(parsed) ? parsed : [String(parsed)];
+					} catch {
+						val = val.split(",").map((v) => strip(v));
+					}
+					val = Array.isArray(val) ? val : val.split(",").map((v) => strip(v));
 				}
-				val = Array.isArray(val) ? val : val.split(",").map((v) => strip(v));
 			}
 		} else if (frappe.boot.additional_filters_config[condition]) {
 			val = field.value || val;
