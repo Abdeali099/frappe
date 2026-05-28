@@ -142,6 +142,10 @@ frappe.ui.Filter = class {
 				fieldtype = "MultiSelect";
 			}
 
+			if (this.field.df.original_type === "Link" && ["in", "not in"].includes(condition)) {
+				fieldtype = "MultiSelectLink";
+			}
+
 			this.set_field(this.field.df.parent, this.field.df.fieldname, fieldtype, condition);
 		});
 	}
@@ -294,6 +298,12 @@ frappe.ui.Filter = class {
 		this.toggle_nested_set_conditions(df);
 		let field_area = this.filter_edit_area.find(".filter-field").empty().get(0);
 		df.input_class = "input-xs";
+
+		if (df.fieldtype === "MultiSelectLink" && df.original_type === "Link") {
+			let link_doctype = df.options;
+			df.get_data = (txt) => frappe.db.get_link_options(link_doctype, txt);
+		}
+
 		let f = frappe.ui.form.make_control({
 			df: df,
 			parent: field_area,
@@ -486,11 +496,14 @@ frappe.ui.filter_utils = {
 			}
 		} else if (["in", "not in"].includes(condition)) {
 			if (val) {
-				try {
-					const parsed = JSON.parse(val);
-					val = Array.isArray(parsed) ? parsed : [String(parsed)];
-				} catch {
-					val = val.split(",").map((v) => strip(v));
+				if (!Array.isArray(val)) {
+					try {
+						const parsed = JSON.parse(val);
+						val = Array.isArray(parsed) ? parsed : [String(parsed)];
+					} catch {
+						val = val.split(",").map((v) => strip(v));
+					}
+					val = Array.isArray(val) ? val : val.split(",").map((v) => strip(v));
 				}
 			}
 		} else if (frappe.boot.additional_filters_config[condition]) {
@@ -577,6 +590,8 @@ frappe.ui.filter_utils = {
 			[
 				"=",
 				"!=",
+				"in",
+				"not in",
 				"descendants of",
 				"descendants of (inclusive)",
 				"ancestors of",
