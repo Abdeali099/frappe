@@ -391,8 +391,25 @@ def add_custom_column_data(custom_columns, result):
 	return result
 
 
+def get_user_facing_error(traceback: str | None) -> str:
+	"""Return the message worth showing the reader, or "" if there is none.
+
+	`frappe.throw` messages say what to fix, so they are shown. Every other exception is an
+	internal crash the reader cannot act on, so it is not.
+	"""
+	from frappe.utils.html_utils import clean_html
+
+	message = (traceback or "").strip().rsplit("\n", 1)[-1]
+	exception_class, separator, thrown_message = message.partition(": ")
+
+	if not separator or not exception_class.startswith("frappe.exceptions."):
+		return ""
+
+	return clean_html(thrown_message)
+
+
 def get_prepared_report_result(report, filters, dn="", user=None):
-	from frappe.core.doctype.prepared_report.prepared_report import get_completed_prepared_report
+	from frappe.core.doctype.prepared_report.prepared_report import get_latest_prepared_report
 
 	def get_report_data(doc, data):
 		# backwards compatibility - prepared report used to have a columns field,
@@ -411,11 +428,17 @@ def get_prepared_report_result(report, filters, dn="", user=None):
 
 	report_data = {}
 	if not dn:
-		dn = get_completed_prepared_report(
+		dn = get_latest_prepared_report(
 			filters, user, report.get("custom_report") or report.get("report_name")
 		)
 
 	doc = frappe.get_doc("Prepared Report", dn) if dn else None
+	if doc and doc.status == "Error":
+		error = get_user_facing_error(doc.error_message)
+		# the traceback stays on the Prepared Report, it is not for the browser
+		doc.error_message = None
+		return {"prepared_report": True, "doc": doc, "error": error}
+
 	if doc:
 		try:
 			if data := json.loads(doc.get_prepared_data().decode("utf-8")):

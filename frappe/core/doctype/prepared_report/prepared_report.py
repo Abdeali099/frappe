@@ -17,7 +17,7 @@ from frappe.desk.form.load import get_attachments
 from frappe.desk.query_report import generate_report_result, get_reference_report
 from frappe.model.document import Document
 from frappe.monitor import add_data_to_monitor
-from frappe.utils import add_to_date, now
+from frappe.utils import add_to_date, get_url_to_report_with_filters, now
 from frappe.utils.background_jobs import enqueue, get_redis_conn
 
 # If prepared report runs for longer than this time it's automatically considered as failed
@@ -36,7 +36,7 @@ class PreparedReport(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
-		error_message: DF.Text | None
+		error_message: DF.Code | None
 		filters: DF.SmallText | None
 		job_id: DF.Data | None
 		peak_memory_usage: DF.Int
@@ -44,7 +44,7 @@ class PreparedReport(Document):
 		queued_by: DF.Data | None
 		report_end_time: DF.Datetime | None
 		report_name: DF.Data
-		status: DF.Literal["Error", "Queued", "Completed", "Started"]
+		status: DF.Literal["Error", "Queued", "Completed", "Started", "Cancelled"]
 	# end: auto-generated types
 
 	@property
@@ -149,20 +149,10 @@ def generate_report(prepared_report):
 
 		instance.status = "Completed"
 
-		frappe.get_doc(
-			{
-				"doctype": "Notification Log",
-				"subject": f"{instance.report_name} report is ready.",
-				"for_user": frappe.session.user,
-				"document_type": "Report",
-				"document_name": report.name,
-				"link": f"/desk/query-report/{report.name}?prepared_report_name={instance.name}",
-			}
-		).insert(ignore_permissions=True)
-
 	except Exception:
 		# we need to ensure that error gets stored
 		_save_error(instance, error=frappe.get_traceback(with_context=True))
+		notify_report_status(instance, _("{0} report failed.").format(instance.report_name))
 		return
 
 	instance.reload()
@@ -172,10 +162,28 @@ def generate_report(prepared_report):
 	add_data_to_monitor(peak_memory_usage=instance.peak_memory_usage)
 	instance.save(ignore_permissions=True)
 
+	notify_report_status(instance, _("{0} report is ready.").format(instance.report_name))
+
+
+def notify_report_status(instance, subject):
+	"""Notify the owner that the report is done, successfully or not."""
+	link = get_url_to_report_with_filters(instance.report_name, f"prepared_report_name={instance.name}")
+
+	frappe.get_doc(
+		{
+			"doctype": "Notification Log",
+			"subject": subject,
+			"for_user": instance.owner,
+			"document_type": "Report",
+			"document_name": instance.report_name,
+			"link": link,
+		}
+	).insert(ignore_permissions=True)
+
 	frappe.publish_realtime(
 		"report_generated",
 		{"report_name": instance.report_name, "name": instance.name},
-		user=frappe.session.user,
+		user=instance.owner,
 	)
 
 
@@ -205,9 +213,9 @@ def update_job_id(prepared_report):
 @frappe.whitelist()
 def make_prepared_report(report_name: str, filters: dict[str, Any] | str | list | None = None):
 	"""run reports in background"""
-	from frappe.desk.query_report import get_report_doc
+	from frappe.desk.query_report import get_report_doc as validate_report_permission
 
-	get_report_doc(report_name)
+	validate_report_permission(report_name)
 	prepared_report = frappe.get_doc(
 		{
 			"doctype": "Prepared Report",
@@ -265,15 +273,16 @@ def get_reports_in_queued_state(report_name: str, filters: dict[str, Any] | str 
 	)
 
 
-def get_completed_prepared_report(filters, user, report_name):
+def get_latest_prepared_report(filters, user, report_name):
 	return frappe.db.get_value(
 		"Prepared Report",
 		filters={
-			"status": "Completed",
+			"status": ("in", ("Completed", "Error")),
 			"filters": process_filters_for_prepared_report(filters),
 			"owner": user,
 			"report_name": report_name,
 		},
+		order_by="creation desc",
 	)
 
 
@@ -285,7 +294,7 @@ def expire_stalled_report():
 			"creation": ("<", add_to_date(now(), seconds=-FAILURE_THRESHOLD, as_datetime=True)),
 		},
 		{
-			"status": "Failed",
+			"status": "Error",
 			"error_message": frappe._("Report timed out."),
 		},
 		update_modified=False,

@@ -26,6 +26,45 @@ class TestQueryReport(IntegrationTestCase):
 	def tearDown(self):
 		frappe.db.rollback()
 
+	def test_user_facing_error(self):
+		from frappe.desk.query_report import get_user_facing_error
+
+		thrown = "Traceback (most recent call last):\n  File 'x.py', line 1\n{}"
+
+		# frappe.throw messages are written for the reader, markup and all
+		self.assertEqual(
+			"Row 6: <strong>1 / 0</strong> divides by zero.<br>Check the divisor first.",
+			get_user_facing_error(
+				thrown.format(
+					"frappe.exceptions.ValidationError: Row 6: <strong>1 / 0</strong>"
+					" divides by zero.<br>Check the divisor first."
+				)
+			),
+		)
+		# the same message once frappe has stripped its markup (worker stdin is a tty)
+		self.assertEqual(
+			"Please select a Company.",
+			get_user_facing_error(
+				thrown.format("frappe.exceptions.MandatoryError: Please select a Company.")
+			),
+		)
+		# internal crashes say nothing, so the traceback never reaches the browser
+		for crash in (
+			"MySQLdb.ProgrammingError: (1146, \"Table 'x.tabNope' doesn't exist\")",
+			"TypeError: unsupported operand type(s) for /: 'int' and 'str'",
+			"frappe.exceptions.ValidationError",
+		):
+			self.assertEqual("", get_user_facing_error(thrown.format(crash)), crash)
+
+		self.assertEqual("", get_user_facing_error(None))
+		# markup that is not safe to render is dropped
+		self.assertNotIn(
+			"script",
+			get_user_facing_error(
+				thrown.format("frappe.exceptions.ValidationError: <script>alert(1)</script>")
+			),
+		)
+
 	def test_save_report_accepts_native_columns_and_filters(self):
 		from frappe.desk.query_report import save_report
 
