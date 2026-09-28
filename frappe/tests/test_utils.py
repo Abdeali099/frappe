@@ -2113,3 +2113,11 @@ class TestMsgPrint(UnitTestCase):
 		frappe.msgprint("<ul><li>abc<li></ul>")
 		message = frappe.get_message_log()[-1]
 		self.assertIn("<ul><li>", message.message)
+
+	def test_thrown_message_keeps_markup_on_a_tty(self):
+		"""A terminal only changes what is printed, never what is raised."""
+		with patch("sys.stdin.isatty", return_value=True), self.assertRaises(frappe.ValidationError) as cm:
+			frappe.throw("Row 6: <strong>1 / 0</strong> divides by zero.<br>Check the divisor first.")
+
+		self.assertIn("<strong>1 / 0</strong>", str(cm.exception))
+		self.assertIn("<br>", str(cm.exception))

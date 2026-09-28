@@ -76,16 +76,18 @@ def msgprint(
 		else:
 			out.message = clean_html(msg)
 
+	# only for the console below: stripping `msg` itself would also strip the raised exception
+	printable_msg = msg
 	if sys.stdin and sys.stdin.isatty():
 		if out.as_list:
-			msg = [strip_html_tags(cell) for cell in msg]
+			printable_msg = [strip_html_tags(cell) for cell in msg]
 		elif out.as_table:
-			msg = [[strip_html_tags(cell) for cell in row] for row in msg]
+			printable_msg = [[strip_html_tags(cell) for cell in row] for row in msg]
 		else:
-			msg = strip_html_tags(msg)
+			printable_msg = strip_html_tags(msg)
 
 	if frappe.flags.print_messages and out.message:
-		print(f"Message: {msg}")
+		print(f"Message: {printable_msg}")
 
 	out.title = title or _("Message", context="Default title of the message dialog")
 
